@@ -9,13 +9,10 @@ import com.gargoylesoftware.htmlunit.html.HtmlPage;
 import com.gargoylesoftware.htmlunit.html.HtmlTable;
 import com.gargoylesoftware.htmlunit.html.HtmlTableRow;
 
-import java.io.BufferedReader;
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileReader;
-import java.io.FileWriter;
-import java.io.IOException;
+import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,11 +27,12 @@ import java.util.stream.StreamSupport;
 public class FGQuery {
     static final String IDCHANGELOG_URL = "https://www.smartfantasybaseball.com/PLAYERIDMAPCHANGELOG";
     static final String IDMAP_URL = "https://www.smartfantasybaseball.com/PLAYERIDMAPCSV";
+    static final String PROPS_FILENAME = "config.properties";
     static String IDMAP_FILE = "idmap";
 
     Properties prop;
     WebClient client;
-    HashMap<String, String> idMap;
+    HashMap<String, String> idMap = new HashMap<>();
     String URL;
     String USERNAME;
     String PASSWORD;
@@ -115,6 +113,10 @@ public class FGQuery {
             page = client.getPage(form.getWebRequest(null));
             page = client.getPage(URL + "/stats/stats-main?print_rows=9999");
             DomElement div = page.getElementById("sortableStats");
+            if(div == null) {
+                System.out.println("Unable to find free agents, are your login credentials correct?");
+                System.exit(1);
+            }
             HtmlTable table = (HtmlTable)StreamSupport.stream(div.getHtmlElementDescendants().spliterator(), false)
                     .filter(e -> e.getClass() == HtmlTable.class)
                     .findFirst().get();
@@ -180,13 +182,10 @@ public class FGQuery {
         System.out.println("pitchers: " + pitString);
     }
 
-    private void setup() {
+    private void configureFromPropertiesFile(Path path) {
         prop = new Properties();
-        try {
-            String propFileName = "config.properties";
-            FileInputStream inputStream = new FileInputStream(propFileName);
+        try(InputStream inputStream = Files.newInputStream(path)) {
             prop.load(inputStream);
-            inputStream.close();
         } catch (Exception e) {
             // you can just enter your details here
 //            prop.setProperty("league", "");
@@ -195,24 +194,76 @@ public class FGQuery {
             System.out.println("missing properties file");
             System.exit(0);
         }
-        URL = "https://" + prop.getProperty("league") + ".baseball.cbssports.com";
+        setUrl(prop.getProperty("league"));
         USERNAME = prop.getProperty("user");
         PASSWORD = prop.getProperty("pass");
+    }
 
+    private void createClient() {
         client = new WebClient(BrowserVersion.CHROME);
         java.util.logging.Logger.getLogger("com.gargoylesoftware").setLevel(java.util.logging.Level.OFF);
         client.getOptions().setCssEnabled(false);
         client.getOptions().setJavaScriptEnabled(false);
         client.getOptions().setThrowExceptionOnScriptError(false);
+    }
 
-        idMap = new HashMap<>();
+    private void setUrl(String leagueName) {
+        URL = "https://" + leagueName + ".baseball.cbssports.com";
+    }
+
+    private void configureFromArgs(String[] args) {
+        int argCount = args.length;
+        for(int index = 0; index < argCount; index++) {
+            String arg = args[index];
+            switch(arg) {
+                case "--username":
+                    if(++index < argCount) {
+                        USERNAME = args[index];
+                    }
+                    break;
+                case "--password":
+                    if(++index < argCount) {
+                        PASSWORD = args[index];
+                    }
+                    break;
+                case "--league":
+                    if(++index < argCount) {
+                        setUrl(args[index]);
+                    }
+                    break;
+            }
+        }
+        boolean exit = false;
+        if(USERNAME == null) {
+            System.out.println("use --username to set username");
+            exit = true;
+        }
+        if(PASSWORD == null) {
+            System.out.println("use --password to set password");
+            exit = true;
+        }
+        if(URL == null) {
+            System.out.println("use --league to set league name");
+            exit = true;
+        }
+        if(exit) {
+            System.exit(1);
+        }
+
     }
 
     public static void main(String[] args) {
         FGQuery q = new FGQuery();
-        q.setup();
+        Path propertiesPath = Paths.get(PROPS_FILENAME);
+        if(Files.exists(propertiesPath)) {
+            q.configureFromPropertiesFile(propertiesPath);
+        } else {
+            q.configureFromArgs(args);
+        }
+        q.createClient();
         q.updateIdsIfNeeded();
         q.loadIds();
         q.outputUrl();
     }
+
 }
